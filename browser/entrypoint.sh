@@ -31,7 +31,7 @@ cleanup() {
     tailscale --socket="$TS_SOCKET" logout >/dev/null 2>&1 || true
   fi
   for pid in "${CHILD_PIDS[@]:-}"; do
-    [[ -n "$pid" ]] && kill "$pid" 2>/dev/null || true
+    if [[ -n "$pid" ]]; then kill "$pid" 2>/dev/null || true; fi
   done
 }
 trap cleanup EXIT
