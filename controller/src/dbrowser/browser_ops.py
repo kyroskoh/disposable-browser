@@ -1,10 +1,11 @@
 """Drive a session's Chromium over CDP with Playwright. Each call connects, acts, disconnects.
 
-The controller keeps no per-session state, so "the current tab" is the one Chromium activated
-most recently: DevTools' /json/list returns page targets newest-activation first. `select_tab`
-brings a tab to the front (an activation), and so does a human clicking a tab in the noVNC
-viewer, so later calls follow either. (document.visibilityState can't be used: Playwright
-emulates focus on every page it attaches to, so all tabs report "visible".)
+"The current tab" is the one an agent last opened or selected: PlaywrightOps remembers its
+CDP target id per session (in memory, bounded). Chromium can't be asked reliably: pages
+created over CDP open in their own windows, so bringing one to the front doesn't change
+DevTools' /json/list activation order, and document.visibilityState reads "visible"
+everywhere. /json/list order is only the fallback, e.g. after a controller restart or when
+the remembered tab has been closed.
 """
 
 from __future__ import annotations
@@ -12,6 +13,7 @@ from __future__ import annotations
 import asyncio
 import contextlib
 import logging
+from collections import OrderedDict
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Protocol
 
@@ -22,7 +24,7 @@ log = logging.getLogger("dbrowser.browser_ops")
 
 WaitState = Literal["visible", "hidden", "attached", "detached"]
 HISTORY_SETTLE_MS = 10_000
-ACTIVATE_SETTLE_S = 5.0
+MAX_REMEMBERED_SESSIONS = 1024
 
 
 class BrowserOpsError(Exception):
@@ -62,51 +64,47 @@ async def _target_id(ctx, page) -> str | None:
         return None
 
 
-async def _active_index(ctx, pages: list, cdp_url: str) -> int:
-    """Index of the most recently activated tab; the last tab if Chromium won't say."""
-    if len(pages) <= 1:
-        return 0
-    try:
-        async with httpx.AsyncClient(timeout=5) as client:
-            targets = (await client.get(f"{cdp_url}/json/list")).json()
-    except (httpx.HTTPError, ValueError):
-        log.warning("could not read %s/json/list; assuming the last tab is active", cdp_url)
-        return len(pages) - 1
-    rank = {t["id"]: i for i, t in enumerate(t for t in targets if t.get("type") == "page")}
-    ids = await asyncio.gather(*(_target_id(ctx, p) for p in pages))
+def _pick_active(ids: list[str | None], selected: str | None, devtools_order: list[str]) -> int:
+    """Index of the current tab: the remembered one, else Chromium's most recent, else the last."""
+    if selected is not None and selected in ids:
+        return ids.index(selected)
+    rank = {tid: i for i, tid in enumerate(devtools_order)}
     ranked = [(rank[tid], i) for i, tid in enumerate(ids) if tid in rank]
-    return min(ranked)[1] if ranked else len(pages) - 1
-
-
-async def _activate(ctx, page, cdp_url: str) -> None:
-    """Bring `page` to the front and wait until /json/list reports it as most recent.
-
-    Chromium updates the activation order asynchronously, so without the wait the next
-    (separately connected) call can still see the previously active tab first.
-    """
-    await page.bring_to_front()
-    tid = await _target_id(ctx, page)
-    if tid is None:
-        return
-    deadline = asyncio.get_running_loop().time() + ACTIVATE_SETTLE_S
-    async with httpx.AsyncClient(timeout=5) as client:
-        while True:
-            try:
-                targets = (await client.get(f"{cdp_url}/json/list")).json()
-                first = next((t["id"] for t in targets if t.get("type") == "page"), None)
-                if first == tid:
-                    return
-            except (httpx.HTTPError, ValueError):
-                pass
-            if asyncio.get_running_loop().time() >= deadline:
-                log.warning("tab %s not reported active after %.1fs", tid, ACTIVATE_SETTLE_S)
-                return
-            await asyncio.sleep(0.1)
+    return min(ranked)[1] if ranked else len(ids) - 1
 
 
 class PlaywrightOps:
     def __init__(self, timeout_ms: int = 30_000) -> None:
         self.timeout_ms = timeout_ms
+        # cdp_url -> target id of the tab an agent last opened or selected (insertion-ordered).
+        self._selected: OrderedDict[str, str] = OrderedDict()
+
+    def _remember(self, cdp_url: str, target_id: str) -> None:
+        self._selected[cdp_url] = target_id
+        self._selected.move_to_end(cdp_url)
+        while len(self._selected) > MAX_REMEMBERED_SESSIONS:
+            self._selected.popitem(last=False)
+
+    async def _active_index(self, ctx, pages: list, cdp_url: str) -> int:
+        if len(pages) <= 1:
+            return 0
+        ids = list(await asyncio.gather(*(_target_id(ctx, p) for p in pages)))
+        selected = self._selected.get(cdp_url)
+        order: list[str] = []
+        if selected not in ids:
+            try:
+                async with httpx.AsyncClient(timeout=5) as client:
+                    targets = (await client.get(f"{cdp_url}/json/list")).json()
+                order = [t["id"] for t in targets if t.get("type") == "page"]
+            except (httpx.HTTPError, ValueError):
+                log.warning("could not read %s/json/list; assuming the last tab is active", cdp_url)
+        return _pick_active(ids, selected, order)
+
+    async def _activate(self, ctx, page, cdp_url: str) -> None:
+        await page.bring_to_front()  # for a human watching the viewer
+        tid = await _target_id(ctx, page)
+        if tid is not None:
+            self._remember(cdp_url, tid)
 
     @asynccontextmanager
     async def _context(self, cdp_url: str):
@@ -124,7 +122,7 @@ class PlaywrightOps:
     async def _page(self, cdp_url: str):
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
-            page = pages[await _active_index(ctx, pages, cdp_url)] if pages else await ctx.new_page()
+            page = pages[await self._active_index(ctx, pages, cdp_url)] if pages else await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             yield page
 
@@ -215,14 +213,14 @@ class PlaywrightOps:
     async def tabs(self, cdp_url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
-            return await self._tab_list(pages, await _active_index(ctx, pages, cdp_url))
+            return await self._tab_list(pages, await self._active_index(ctx, pages, cdp_url))
 
     async def new_tab(self, cdp_url: str, url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
             page = await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             await page.goto(url, wait_until="domcontentloaded")
-            await _activate(ctx, page, cdp_url)
+            await self._activate(ctx, page, cdp_url)
             pages = _user_pages(ctx)
             return await self._tab_list(pages, pages.index(page))
 
@@ -230,7 +228,7 @@ class PlaywrightOps:
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
             self._check_index(pages, index)
-            await _activate(ctx, pages[index], cdp_url)
+            await self._activate(ctx, pages[index], cdp_url)
             return await self._tab_list(pages, index)
 
     async def close_tab(self, cdp_url: str, index: int) -> list[dict[str, Any]]:
@@ -242,8 +240,8 @@ class PlaywrightOps:
                 raise BrowserOpsError("refusing to close the last tab; use browser_close to end the session")
             await pages[index].close()
             pages = _user_pages(ctx)
-            active = await _active_index(ctx, pages, cdp_url)
-            await _activate(ctx, pages[active], cdp_url)
+            active = await self._active_index(ctx, pages, cdp_url)
+            await self._activate(ctx, pages[active], cdp_url)
             return await self._tab_list(pages, active)
 
     @staticmethod
