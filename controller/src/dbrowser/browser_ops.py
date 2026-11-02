@@ -1,18 +1,24 @@
 """Drive a session's Chromium over CDP with Playwright. Each call connects, acts, disconnects.
 
-The controller keeps no per-session state, so "the current tab" is whichever tab Chromium is
-showing: the page whose document is visible. `select_tab` brings a tab to the front, which is
-what later calls (and the human watching the noVNC viewer) then see.
+The controller keeps no per-session state, so "the current tab" is the one Chromium activated
+most recently: DevTools' /json/list returns page targets newest-activation first. `select_tab`
+brings a tab to the front (an activation), and so does a human clicking a tab in the noVNC
+viewer, so later calls follow either. (document.visibilityState can't be used: Playwright
+emulates focus on every page it attaches to, so all tabs report "visible".)
 """
 
 from __future__ import annotations
 
 import asyncio
 import contextlib
+import logging
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Protocol
 
+import httpx
 from playwright.async_api import TimeoutError as PlaywrightTimeout
+
+log = logging.getLogger("dbrowser.browser_ops")
 
 WaitState = Literal["visible", "hidden", "attached", "detached"]
 HISTORY_SETTLE_MS = 10_000
@@ -44,17 +50,31 @@ def _user_pages(ctx) -> list:
     return [p for p in ctx.pages if not p.url.startswith(("devtools://", "chrome-extension://"))]
 
 
-async def _is_visible(page) -> bool:
+async def _target_id(ctx, page) -> str | None:
     try:
-        return await asyncio.wait_for(page.evaluate("document.visibilityState"), 2.0) == "visible"
-    except Exception:  # a page stuck on a dialog or mid-navigation is not "the" tab
-        return False
+        session = await ctx.new_cdp_session(page)
+        try:
+            return (await session.send("Target.getTargetInfo"))["targetInfo"]["targetId"]
+        finally:
+            await session.detach()
+    except Exception:  # a closing page has no target; it can't be the active tab anyway
+        return None
 
 
-async def _active_index(pages: list) -> int:
-    visible = await asyncio.gather(*(_is_visible(p) for p in pages))
-    hits = [i for i, v in enumerate(visible) if v]
-    return hits[-1] if hits else len(pages) - 1
+async def _active_index(ctx, pages: list, cdp_url: str) -> int:
+    """Index of the most recently activated tab; the last tab if Chromium won't say."""
+    if len(pages) <= 1:
+        return 0
+    try:
+        async with httpx.AsyncClient(timeout=5) as client:
+            targets = (await client.get(f"{cdp_url}/json/list")).json()
+    except (httpx.HTTPError, ValueError):
+        log.warning("could not read %s/json/list; assuming the last tab is active", cdp_url)
+        return len(pages) - 1
+    rank = {t["id"]: i for i, t in enumerate(t for t in targets if t.get("type") == "page")}
+    ids = await asyncio.gather(*(_target_id(ctx, p) for p in pages))
+    ranked = [(rank[tid], i) for i, tid in enumerate(ids) if tid in rank]
+    return min(ranked)[1] if ranked else len(pages) - 1
 
 
 class PlaywrightOps:
@@ -77,7 +97,7 @@ class PlaywrightOps:
     async def _page(self, cdp_url: str):
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
-            page = pages[await _active_index(pages)] if pages else await ctx.new_page()
+            page = pages[await _active_index(ctx, pages, cdp_url)] if pages else await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             yield page
 
@@ -168,7 +188,7 @@ class PlaywrightOps:
     async def tabs(self, cdp_url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
-            return await self._tab_list(pages, await _active_index(pages))
+            return await self._tab_list(pages, await _active_index(ctx, pages, cdp_url))
 
     async def new_tab(self, cdp_url: str, url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
@@ -195,7 +215,7 @@ class PlaywrightOps:
                 raise BrowserOpsError("refusing to close the last tab; use browser_close to end the session")
             await pages[index].close()
             pages = _user_pages(ctx)
-            active = await _active_index(pages)
+            active = await _active_index(ctx, pages, cdp_url)
             await pages[active].bring_to_front()
             return await self._tab_list(pages, active)
 
