@@ -181,7 +181,8 @@ def test_mcp_tabs_history_wait_and_accessibility(api):
         assert back["moved"] and "example.com" in back["url"], back
 
         aria = _tool("browser_accessibility_snapshot", {}, 5)
-        assert 'heading "Example Domain"' in aria["aria"], aria
+        # Assert on ARIA structure, not page copy: example.com's markup changes over time.
+        assert "- paragraph" in aria["aria"] and "- link " in aria["aria"], aria
         assert "Example Domain" in _tool("browser_wait_for", {"text": "Example Domain"}, 6)["title"]
 
         tabs = _tool("browser_tabs", {"action": "new", "url": "https://example.net/"}, 7)["tabs"]
