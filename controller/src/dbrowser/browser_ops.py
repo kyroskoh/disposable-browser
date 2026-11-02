@@ -8,10 +8,14 @@ what later calls (and the human watching the noVNC viewer) then see.
 from __future__ import annotations
 
 import asyncio
+import contextlib
 from contextlib import asynccontextmanager
 from typing import Any, Literal, Protocol
 
+from playwright.async_api import TimeoutError as PlaywrightTimeout
+
 WaitState = Literal["visible", "hidden", "attached", "detached"]
+HISTORY_SETTLE_MS = 10_000
 
 
 class BrowserOpsError(Exception):
@@ -139,12 +143,14 @@ class PlaywrightOps:
         async with self._page(cdp_url) as page:
             go = page.go_back if direction == "back" else page.go_forward
             before = page.url
-            # A back/forward-cache restore fires no new DOMContentLoaded, so waiting for it
-            # would hang until the timeout. Wait for the commit, then for a load state, which
-            # returns at once when the restored page is already loaded. The response is None
-            # both for "no history" and for bfcache restores, so judge movement by the URL.
+            # The image disables the back-forward cache, because a restored page fires no
+            # lifecycle events and Playwright's load-state tracking stalls over CDP. As a
+            # safety net (e.g. a custom image with it enabled), wait for the commit and give
+            # the load state a bounded wait. The response is None for "no history" and for
+            # cache restores alike, so judge movement by the URL.
             await go(wait_until="commit")
-            await page.wait_for_load_state("domcontentloaded")
+            with contextlib.suppress(PlaywrightTimeout):
+                await page.wait_for_load_state("domcontentloaded", timeout=HISTORY_SETTLE_MS)
             return {**await self._state(page), "moved": page.url != before}
 
     async def wait_for(

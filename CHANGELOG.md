@@ -18,6 +18,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - **docker-socket-proxy (E-2):** the controller no longer mounts the Docker socket. Compose runs `tecnativa/docker-socket-proxy` (container endpoints only) on an internal `docker-api` network and points `DOCKER_HOST` at it. `DOCKER_GID` is no longer needed. The controller also can't pull images any more, so build or `docker pull` the browser image first.
 - MCP tool errors an agent can act on (session, quota, tab, Playwright and validation errors) now return their message instead of a generic "Error executing tool".
 - Requires `playwright>=1.49` (for ARIA snapshots).
+- Chromium's back-forward cache is disabled. Restored pages fire no lifecycle events, which stalled `browser_back` / `browser_forward` over CDP, and the cache keeps pages you've left alive in memory.
 - ENHANCEMENT and ROADMAP: added DNS profiles (E-16) and the gaps found in the v0.2 review (E-17 to E-26), and planned v0.3 as a security and privacy release.
 - README restructured to the house template: emoji sections, Key libraries, Acknowledgments, Support, footer.
 - `CONTRIBUTION.md` renamed to `CONTRIBUTING.md`, the name GitHub recognises.

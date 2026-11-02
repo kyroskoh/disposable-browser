@@ -201,7 +201,9 @@ run_chromium() {
     --no-first-run --no-default-browser-check --disable-sync
     --disable-background-networking --disable-component-update
     --disable-breakpad --disable-crash-reporter
-    --disable-features=Translate,MediaRouter,OptimizationHints
+    # BackForwardCache: restored pages fire no lifecycle events, which stalls CDP
+    # automation of back/forward; it also keeps pages you've left alive in memory.
+    --disable-features=Translate,MediaRouter,OptimizationHints,BackForwardCache
     --password-store=basic
     --window-position=0,0 --window-size="${SCREEN_WIDTH},${SCREEN_HEIGHT}" --start-maximized
   )
