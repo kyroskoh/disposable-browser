@@ -184,7 +184,8 @@ def test_mcp_tabs_history_wait_and_accessibility(api):
         # Assert on ARIA structure, not page copy: example.com's markup changes over time.
         assert "- paragraph" in aria["aria"] and "- link " in aria["aria"], aria
         assert "example.com" in _tool("browser_wait_for", {"text": "Learn more"}, 6)["url"]
-        assert "example.com" in _tool("browser_wait_for", {"selector": "a[href]", "state": "attached"}, 61)["url"]
+        attached = {"selector": "a[href]", "state": "attached"}
+        assert "example.com" in _tool("browser_wait_for", attached, 61)["url"]
 
         tabs = _tool("browser_tabs", {"action": "new", "url": "https://example.net/"}, 7)["tabs"]
         assert len(tabs) == 2 and tabs[1]["active"] and "example.net" in tabs[1]["url"]
