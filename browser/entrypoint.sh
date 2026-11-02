@@ -21,7 +21,8 @@ ENABLE_CDP="${ENABLE_CDP:-1}"
 KILL_SWITCH="${KILL_SWITCH:-1}"
 ADBLOCK="${ADBLOCK:-1}"
 IDLE_TIMEOUT="${IDLE_TIMEOUT:-0}"
-UBOL_DIR=/opt/dbrowser/extensions/ubol
+UBOL_SRC=/opt/dbrowser/extensions/ubol
+UBOL_DIR=/tmp/extensions/ubol
 TS_SOCKS="127.0.0.1:1055"
 TS_SOCKET="/tmp/tailscale/tailscaled.sock"
 RUN_AS=(setpriv --reuid=10001 --regid=10001 --init-groups --)
@@ -44,7 +45,7 @@ trap 'exit 0' TERM INT
 bg() { "$@" & CHILD_PIDS+=("$!"); }
 
 prepare_tmp() {
-  mkdir -p /tmp/home /tmp/profile /tmp/policies/managed /tmp/tailscale /tmp/wg
+  mkdir -p /tmp/home /tmp/profile /tmp/policies/managed /tmp/tailscale /tmp/wg /tmp/extensions
   mkdir -m 1777 /tmp/.X11-unix
   chown 10001:10001 /tmp/home /tmp/profile
   chmod 0700 /tmp/home /tmp/profile /tmp/wg
@@ -56,6 +57,12 @@ prepare_tmp() {
   printf '{"RestoreOnStartup":4,"RestoreOnStartupURLs":["%s"]}\n' "$START_URL" \
     > /tmp/policies/managed/20-start.json
   chmod -R a+rX /tmp/policies
+  if [[ "$ADBLOCK" == "1" && -f "$UBOL_SRC/manifest.json" ]]; then
+    # Chromium writes indexed declarativeNetRequest rulesets into an unpacked
+    # extension's own _metadata/ directory, so it needs a writable per-session copy.
+    cp -r "$UBOL_SRC" "$UBOL_DIR"
+    chown -R 10001:10001 "$UBOL_DIR"
+  fi
 }
 
 setup_wireguard() {

@@ -8,7 +8,16 @@ NAME="dbrowser-smoke-$$"
 
 docker run -d --rm --name "$NAME" --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
   --shm-size=1g -p 127.0.0.1::6080 -p 127.0.0.1::9223 -e VNC_PASSWORD=smoketst "$IMAGE" >/dev/null
-trap 'docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
+# shellcheck disable=SC2329  # invoked via trap
+on_exit() {
+  local rc=$?
+  if (( rc != 0 )); then
+    echo "--- container logs ($NAME) ---"
+    docker logs "$NAME" 2>&1 | tail -n 100 || true
+  fi
+  docker rm -f "$NAME" >/dev/null 2>&1 || true
+}
+trap on_exit EXIT
 
 viewer_port="$(docker port "$NAME" 6080/tcp | head -n1 | cut -d: -f2)"
 cdp_port="$(docker port "$NAME" 9223/tcp | head -n1 | cut -d: -f2)"
@@ -22,14 +31,27 @@ curl -fsS "http://127.0.0.1:${viewer_port}/vnc.html" | grep -qi novnc || { echo 
 echo "ok: CDP + noVNC up"
 
 python3 - "$cdp_port" <<'PY'
-import sys
+import json, sys, time, urllib.request
 from playwright.sync_api import sync_playwright
+base = f"http://127.0.0.1:{sys.argv[1]}"
+
+def targets():
+    return json.load(urllib.request.urlopen(f"{base}/json/list", timeout=5))
+
 with sync_playwright() as pw:
-    b = pw.chromium.connect_over_cdp(f"http://127.0.0.1:{sys.argv[1]}")
-    page = b.contexts[0].pages[0]
+    b = pw.chromium.connect_over_cdp(base)
+    pages = [p for p in b.contexts[0].pages if not p.url.startswith("chrome-extension://")]
+    print("pages:", [p.url for p in b.contexts[0].pages])
+    page = pages[0]
     page.wait_for_load_state()
     assert "duckduckgo.com" in page.url, page.url
     print("ok: start page", page.url)
+    deadline = time.time() + 20
+    while time.time() < deadline and not any("chrome-extension://" in t["url"] for t in targets()):
+        time.sleep(1)
+    ext = [t["url"] for t in targets() if "chrome-extension://" in t["url"]]
+    assert ext, f"uBlock Origin Lite not loaded; targets: {[(t['type'], t['url']) for t in targets()]}"
+    print("ok: adblock extension running", ext[0])
     try:
         b.new_browser_cdp_session().send("Browser.close")
     except Exception:
