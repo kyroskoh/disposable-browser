@@ -192,8 +192,13 @@ def test_mcp_tabs_history_wait_and_accessibility(api):
         # Stateless "current tab": the next call acts on the tab Chromium shows.
         assert "example.net" in _tool("browser_snapshot", {}, 8)["url"]
 
-        tabs = _tool("browser_tabs", {"action": "select", "index": 0}, 9)["tabs"]
-        assert tabs[0]["active"] and "example.com" in _tool("browser_snapshot", {}, 10)["url"]
+        # Switch back and forth: each call reconnects, so this catches activation races.
+        for rpc_id, (index, host) in enumerate(
+            [(0, "example.com"), (1, "example.net")] * 2 + [(0, "example.com")], 90
+        ):
+            tabs = _tool("browser_tabs", {"action": "select", "index": index}, rpc_id)["tabs"]
+            assert tabs[index]["active"], tabs
+            assert host in _tool("browser_snapshot", {}, rpc_id + 100)["url"], (index, host)
         assert len(_tool("browser_tabs", {"action": "close", "index": 1}, 11)["tabs"]) == 1
     finally:
         _rpc(TOKEN, "tools/call", {"name": "browser_close", "arguments": {}}, 12)

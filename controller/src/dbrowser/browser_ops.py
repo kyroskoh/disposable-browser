@@ -22,6 +22,7 @@ log = logging.getLogger("dbrowser.browser_ops")
 
 WaitState = Literal["visible", "hidden", "attached", "detached"]
 HISTORY_SETTLE_MS = 10_000
+ACTIVATE_SETTLE_S = 5.0
 
 
 class BrowserOpsError(Exception):
@@ -75,6 +76,32 @@ async def _active_index(ctx, pages: list, cdp_url: str) -> int:
     ids = await asyncio.gather(*(_target_id(ctx, p) for p in pages))
     ranked = [(rank[tid], i) for i, tid in enumerate(ids) if tid in rank]
     return min(ranked)[1] if ranked else len(pages) - 1
+
+
+async def _activate(ctx, page, cdp_url: str) -> None:
+    """Bring `page` to the front and wait until /json/list reports it as most recent.
+
+    Chromium updates the activation order asynchronously, so without the wait the next
+    (separately connected) call can still see the previously active tab first.
+    """
+    await page.bring_to_front()
+    tid = await _target_id(ctx, page)
+    if tid is None:
+        return
+    deadline = asyncio.get_running_loop().time() + ACTIVATE_SETTLE_S
+    async with httpx.AsyncClient(timeout=5) as client:
+        while True:
+            try:
+                targets = (await client.get(f"{cdp_url}/json/list")).json()
+                first = next((t["id"] for t in targets if t.get("type") == "page"), None)
+                if first == tid:
+                    return
+            except (httpx.HTTPError, ValueError):
+                pass
+            if asyncio.get_running_loop().time() >= deadline:
+                log.warning("tab %s not reported active after %.1fs", tid, ACTIVATE_SETTLE_S)
+                return
+            await asyncio.sleep(0.1)
 
 
 class PlaywrightOps:
@@ -195,7 +222,7 @@ class PlaywrightOps:
             page = await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             await page.goto(url, wait_until="domcontentloaded")
-            await page.bring_to_front()
+            await _activate(ctx, page, cdp_url)
             pages = _user_pages(ctx)
             return await self._tab_list(pages, pages.index(page))
 
@@ -203,7 +230,7 @@ class PlaywrightOps:
         async with self._context(cdp_url) as ctx:
             pages = _user_pages(ctx)
             self._check_index(pages, index)
-            await pages[index].bring_to_front()
+            await _activate(ctx, pages[index], cdp_url)
             return await self._tab_list(pages, index)
 
     async def close_tab(self, cdp_url: str, index: int) -> list[dict[str, Any]]:
@@ -216,7 +243,7 @@ class PlaywrightOps:
             await pages[index].close()
             pages = _user_pages(ctx)
             active = await _active_index(ctx, pages, cdp_url)
-            await pages[active].bring_to_front()
+            await _activate(ctx, pages[active], cdp_url)
             return await self._tab_list(pages, active)
 
     @staticmethod
