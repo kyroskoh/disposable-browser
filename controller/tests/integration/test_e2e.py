@@ -59,10 +59,9 @@ def test_session_lifecycle_and_privacy_defaults(api):
         assert "duckduckgo.com" in page.url
 
         page.goto("chrome://policy")
-        page.wait_for_timeout(1000)
-        policy_text = page.inner_text("body")
-        assert "DefaultSearchProviderSearchURL" in policy_text
-        assert "WebRtcIPHandling" in policy_text
+        # chrome://policy renders inside shadow DOM; text locators pierce it.
+        for name in ("DefaultSearchProviderSearchURL", "WebRtcIPHandling", "BlockThirdPartyCookies"):
+            page.get_by_text(name, exact=True).first.wait_for(timeout=15_000)
         browser.close()
 
     assert api.delete(f"/v1/sessions/{s['id']}").status_code == 204
