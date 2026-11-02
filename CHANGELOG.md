@@ -9,6 +9,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ### Fixed
 - MCP `browser_tabs`: tab indexes are now stable and later tool calls act on the selected tab. Every call reconnects over CDP, and Playwright lists pages in attach order, which varies between connections, so `select 0` could pick a different tab. Chromium's DevTools activation order did not follow `bring_to_front` either, because tabs created over CDP open in their own windows. The controller now remembers each session's tab order and selected tab (in memory, bounded) and falls back to DevTools order after a restart.
+- Release workflow: pin `sigstore/cosign-installer@v4.1.2` (the action publishes no floating `v4` tag, so the first release run failed before building).
 
 ## [0.2.0] - 2026-11-01
 
