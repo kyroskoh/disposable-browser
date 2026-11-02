@@ -1,0 +1,71 @@
+name: GitHub Release
+
+# Create the GitHub Release for a v* tag once "Release images" has published and signed
+# its images, with that version's CHANGELOG section as the notes. Run it by hand
+# (workflow_dispatch) for a tag whose release is missing.
+on:
+  workflow_run:
+    workflows: ["Release images"]
+    types: [completed]
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Existing tag to release, e.g. v0.2.2"
+        required: true
+      include:
+        description: "Older versions without a release to include in the notes, space-separated (e.g. 0.2.1 0.2.0)"
+        required: false
+        default: ""
+
+permissions:
+  contents: read
+
+jobs:
+  release:
+    if: >-
+      github.event_name == 'workflow_dispatch' ||
+      (github.event.workflow_run.conclusion == 'success' &&
+       startsWith(github.event.workflow_run.head_branch, 'v'))
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write # create the release
+    env:
+      TAG: ${{ github.event_name == 'workflow_dispatch' && inputs.tag || github.event.workflow_run.head_branch }}
+      INCLUDE: ${{ inputs.include }}
+      GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+      GH_REPO: ${{ github.repository }}
+    steps:
+      - name: Validate tag
+        run: |
+          [[ "$TAG" =~ ^v[0-9]+\.[0-9]+\.[0-9]+([-+][0-9A-Za-z.-]+)?$ ]] || { echo "::error::not a version tag: $TAG"; exit 1; }
+          [[ -z "$INCLUDE" || "$INCLUDE" =~ ^[v0-9.\ ]+$ ]] || { echo "::error::bad include list: $INCLUDE"; exit 1; }
+
+      # The default branch, not the tag: its CHANGELOG has every released section and
+      # tags older than this workflow lack scripts/release-notes.sh.
+      - uses: actions/checkout@v5
+
+      - name: Build release notes from CHANGELOG
+        run: |
+          # shellcheck disable=SC2086 # INCLUDE is a validated, space-separated list
+          scripts/release-notes.sh "$TAG" $INCLUDE > "$RUNNER_TEMP/notes.md"
+          image="ghcr.io/${GITHUB_REPOSITORY_OWNER}/disposable-browser"
+          {
+            echo
+            echo "### Images"
+            echo
+            echo '```'
+            echo "${image}-browser:${TAG#v}"
+            echo "${image}-controller:${TAG#v}"
+            echo '```'
+            echo
+            echo "linux/amd64 and linux/arm64, signed keylessly with cosign; see the README for \`cosign verify\`."
+          } >> "$RUNNER_TEMP/notes.md"
+          cat "$RUNNER_TEMP/notes.md"
+
+      - name: Create or update the release
+        run: |
+          if gh release view "$TAG" >/dev/null 2>&1; then
+            gh release edit "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          else
+            gh release create "$TAG" --verify-tag --title "$TAG" --notes-file "$RUNNER_TEMP/notes.md"
+          fi

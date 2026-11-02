@@ -5,6 +5,9 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Added
+- `GitHub Release` workflow: once `Release images` succeeds for a `v*` tag, creates the GitHub Release with that version's CHANGELOG section and the image names as notes (`scripts/release-notes.sh`). It can also be run by hand for a tag that has no release.
+
 ## [0.2.2] - 2026-11-01
 
 First release published to GHCR; v0.2.0 and v0.2.1 were tagged but no images were built.
