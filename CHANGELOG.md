@@ -5,11 +5,17 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.2.2] - 2026-11-01
+
+First release published to GHCR; v0.2.0 and v0.2.1 were tagged but no images were built.
+
+### Fixed
+- Release workflow: pin `sigstore/cosign-installer@v4.1.2`. The action publishes no floating `v4` tag, so the v0.2.1 release run failed before building any image.
+
 ## [0.2.1] - 2026-11-01
 
 ### Fixed
 - MCP `browser_tabs`: tab indexes are now stable and later tool calls act on the selected tab. Every call reconnects over CDP, and Playwright lists pages in attach order, which varies between connections, so `select 0` could pick a different tab. Chromium's DevTools activation order did not follow `bring_to_front` either, because tabs created over CDP open in their own windows. The controller now remembers each session's tab order and selected tab (in memory, bounded) and falls back to DevTools order after a restart.
-- Release workflow: pin `sigstore/cosign-installer@v4.1.2` (the action publishes no floating `v4` tag, so the first release run failed before building).
 
 ## [0.2.0] - 2026-11-01
 
@@ -52,7 +58,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - CI: ruff, pytest (43 unit tests), shellcheck, hadolint, a standalone image smoke test, and end-to-end tests against real Docker.
 - Docs: PRD, README, ROADMAP, ENHANCEMENT, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, ADR 0001.
 
-[Unreleased]: https://github.com/kyroskoh/disposable-browser/compare/v0.2.1...HEAD
+[Unreleased]: https://github.com/kyroskoh/disposable-browser/compare/v0.2.2...HEAD
+[0.2.2]: https://github.com/kyroskoh/disposable-browser/compare/v0.2.1...v0.2.2
 [0.2.1]: https://github.com/kyroskoh/disposable-browser/compare/v0.2.0...v0.2.1
 [0.2.0]: https://github.com/kyroskoh/disposable-browser/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyroskoh/disposable-browser/releases/tag/v0.1.0
