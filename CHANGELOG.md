@@ -5,6 +5,8 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+## [0.2.0] - 2026-11-01
+
 ### Added
 - Release workflow (E-1): on `v*` tags, builds `linux/amd64` + `linux/arm64` images, pushes them to GHCR (`disposable-browser-browser`, `disposable-browser-controller`) with SBOM and provenance, and signs each digest keylessly with cosign.
 - Idle timeout (E-3): `idle_timeout_seconds` per session and `DBROWSER_IDLE_TIMEOUT_SECONDS` as the default (off by default, otherwise at least 30 s). A watchdog in the browser closes Chromium once no CDP or VNC client has been connected for that long, which removes the session.
@@ -44,5 +46,6 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - CI: ruff, pytest (43 unit tests), shellcheck, hadolint, a standalone image smoke test, and end-to-end tests against real Docker.
 - Docs: PRD, README, ROADMAP, ENHANCEMENT, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, ADR 0001.
 
-[Unreleased]: https://github.com/kyroskoh/disposable-browser/compare/v0.1.0...HEAD
+[Unreleased]: https://github.com/kyroskoh/disposable-browser/compare/v0.2.0...HEAD
+[0.2.0]: https://github.com/kyroskoh/disposable-browser/compare/v0.1.0...v0.2.0
 [0.1.0]: https://github.com/kyroskoh/disposable-browser/releases/tag/v0.1.0

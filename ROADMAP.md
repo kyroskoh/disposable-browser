@@ -10,7 +10,7 @@
 - [x] Hermes / Grok-bot multi-agent examples
 - [x] CI: lint, unit, hadolint, smoke and e2e against real Docker
 
-## Now: v0.2 (target 2026-12; implemented, awaiting release)
+## Done: v0.2.x (Hardening & Distribution, shipped 2026-11-01)
 
 - [x] Multi-arch images on GHCR, signed (E-1)
 - [x] docker-socket-proxy (E-2)

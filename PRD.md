@@ -3,7 +3,7 @@
 | | |
 |---|---|
 | Owner | Kyros Koh |
-| Status | v0.1.0 (MVP) |
+| Status | v0.2.0 (Hardening & Distribution) |
 | Last updated | 2026-11-01 |
 
 ## 1. Problem
