@@ -4,7 +4,7 @@ build-backend = "hatchling.build"
 
 [project]
 name = "dbrowser"
-version = "0.2.0"
+version = "0.2.1"
 description = "Disposable, privacy-first Chromium sessions for people and AI agents (REST + MCP)."
 license = "MIT"
 authors = [{ name = "Kyros Koh" }]

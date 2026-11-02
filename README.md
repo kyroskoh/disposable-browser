@@ -9,7 +9,7 @@ Private Chromium sessions that leave nothing behind, for people and for AI agent
 [![Docker](https://img.shields.io/badge/runs%20on-Docker-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
 [![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](examples/mcp-clients.md)
 
-**Version:** 0.2.0 · **Live demo:** self-hosted (see [Getting Started](#-getting-started)) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
+**Version:** 0.2.1 · **Live demo:** self-hosted (see [Getting Started](#-getting-started)) · **Changelog:** [CHANGELOG.md](./CHANGELOG.md)
 
 ## 🚀 Features
 
