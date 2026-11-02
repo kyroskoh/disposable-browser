@@ -58,7 +58,6 @@ jobs:
       - name: Start controller
         run: |
           echo "DBROWSER_API_TOKEN=${DBROWSER_API_TOKEN}" > .env
-          echo "DOCKER_GID=$(getent group docker | cut -d: -f3)" >> .env
           mkdir -p wireguard
           docker compose up -d controller
           for i in $(seq 1 30); do curl -fsS http://localhost:8080/healthz && break; sleep 2; done

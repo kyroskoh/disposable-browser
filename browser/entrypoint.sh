@@ -4,8 +4,9 @@
 # Lifecycle: configure egress (direct | wireguard | tailscale) -> start Xvfb,
 # x11vnc, noVNC -> optionally expose the viewer (cloudflare | tailscale) ->
 # run Chromium in the foreground. When Chromium exits (window closed, CDP
-# Browser.close, or crash) the container exits, and with --rm / auto_remove the
-# whole session, including its tmpfs profile, is gone.
+# Browser.close, crash, or IDLE_TIMEOUT seconds with no CDP/VNC client) the
+# container exits, and with --rm / auto_remove the whole session, including its
+# tmpfs profile, is gone.
 set -euo pipefail
 
 log() { printf '[dbrowser] %s\n' "$*" >&2; }
@@ -18,6 +19,9 @@ SCREEN_HEIGHT="${SCREEN_HEIGHT:-900}"
 START_URL="${START_URL:-https://duckduckgo.com/}"
 ENABLE_CDP="${ENABLE_CDP:-1}"
 KILL_SWITCH="${KILL_SWITCH:-1}"
+ADBLOCK="${ADBLOCK:-1}"
+IDLE_TIMEOUT="${IDLE_TIMEOUT:-0}"
+UBOL_DIR=/opt/dbrowser/extensions/ubol
 TS_SOCKS="127.0.0.1:1055"
 TS_SOCKET="/tmp/tailscale/tailscaled.sock"
 RUN_AS=(setpriv --reuid=10001 --regid=10001 --init-groups --)
@@ -162,6 +166,27 @@ expose_viewer() {
   esac
 }
 
+# Close Chromium once no client has been connected for IDLE_TIMEOUT seconds.
+# Activity means an established TCP connection to Chromium's CDP port (every agent
+# and Playwright call, through socat) or to x11vnc (an open noVNC viewer). The image
+# healthcheck only touches the noVNC web server on 6080, so it doesn't count.
+idle_watchdog() {
+  local chrome="$1" limit="$2" last now
+  last="$(date +%s)"
+  while kill -0 "$chrome" 2>/dev/null; do
+    sleep 5
+    now="$(date +%s)"
+    # Capture, don't pipe into grep -q: with pipefail an early grep exit can SIGPIPE ss.
+    if [[ -n "$(ss -Htn state established '( sport = :9222 or sport = :5900 )')" ]]; then
+      last="$now"
+    elif (( now - last >= limit )); then
+      log "idle for ${limit}s with no CDP or VNC client; closing Chromium"
+      kill -TERM "$chrome" 2>/dev/null || true
+      return 0
+    fi
+  done
+}
+
 run_chromium() {
   # shellcheck disable=SC2054  # commas belong to flag values, not separators
   local flags=(
@@ -181,11 +206,22 @@ run_chromium() {
     # Chromium only listens on loopback; expose CDP to the container network.
     bg socat TCP-LISTEN:9223,fork,reuseaddr,bind=0.0.0.0 TCP:127.0.0.1:9222
   fi
+  if [[ "$ADBLOCK" == "1" ]]; then
+    if [[ -f "$UBOL_DIR/manifest.json" ]]; then
+      flags+=(--load-extension="$UBOL_DIR")
+    else
+      log "ADBLOCK=1 but $UBOL_DIR is missing; continuing without it"
+    fi
+  fi
   flags+=("${CHROMIUM_EXTRA[@]}")
   log "starting Chromium (net=$NET_MODE expose=$EXPOSE_MODE)"
   # shellcheck disable=SC2086
   "${RUN_AS[@]}" env HOME=/tmp/home chromium "${flags[@]}" ${CHROMIUM_FLAGS:-} "$START_URL" &
   local chrome=$!
+  if [[ "$IDLE_TIMEOUT" =~ ^[0-9]+$ ]] && (( IDLE_TIMEOUT > 0 )); then
+    log "idle timeout: ${IDLE_TIMEOUT}s"
+    bg idle_watchdog "$chrome" "$IDLE_TIMEOUT"
+  fi
   echo "DBROWSER_READY=1"
   wait "$chrome" || true
   log "Chromium exited; destroying session"

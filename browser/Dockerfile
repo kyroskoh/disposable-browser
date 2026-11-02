@@ -27,6 +27,7 @@ RUN apt-get update \
       fonts-noto-core fonts-noto-cjk fonts-noto-color-emoji \
       wireguard-tools iproute2 iptables \
       tailscale cloudflared \
+      unzip \
  && apt-get purge -y gnupg \
  && apt-get autoremove -y \
  && rm -rf /var/lib/apt/lists/*
@@ -41,6 +42,19 @@ RUN groupadd --gid 10001 browser \
  && ln -s /tmp/policies/managed /etc/chromium/policies/managed \
  && ln -sf /usr/share/novnc/vnc.html /usr/share/novnc/index.html
 
+# uBlock Origin Lite (MV3 declarativeNetRequest: no remote code, no telemetry), loaded
+# unpacked when ADBLOCK=1. Pinned and checksum-verified; bump both ARGs together.
+ARG UBOL_VERSION=2026.1012.1545
+ARG UBOL_SHA256=73909c8f26d608b00a99f446192630868bea4f947ba293c29bbd18ae948d903b
+RUN curl -fsSL -o /tmp/ubol.zip \
+      "https://github.com/uBlockOrigin/uBOL-home/releases/download/${UBOL_VERSION}/uBOLite_${UBOL_VERSION}.chromium.zip" \
+ && echo "${UBOL_SHA256}  /tmp/ubol.zip" | sha256sum -c - \
+ && mkdir -p /opt/dbrowser/extensions/ubol \
+ && unzip -q /tmp/ubol.zip -d /opt/dbrowser/extensions/ubol \
+ && test -f /opt/dbrowser/extensions/ubol/manifest.json \
+ && chmod -R a+rX,go-w /opt/dbrowser/extensions \
+ && rm /tmp/ubol.zip
+
 COPY policies/managed.json /opt/dbrowser/policies/managed.json
 COPY entrypoint.sh /opt/dbrowser/entrypoint.sh
 RUN chmod 0755 /opt/dbrowser/entrypoint.sh
@@ -51,7 +65,9 @@ ENV DISPLAY=:99 \
     START_URL=https://duckduckgo.com/ \
     NET_MODE=direct \
     EXPOSE_MODE=none \
-    ENABLE_CDP=1
+    ENABLE_CDP=1 \
+    ADBLOCK=1 \
+    IDLE_TIMEOUT=0
 
 # 6080 = noVNC web viewer, 9223 = Chrome DevTools Protocol (agents)
 EXPOSE 6080 9223

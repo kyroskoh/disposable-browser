@@ -42,9 +42,13 @@ Install with `pip install ./controller`. stdio mode uses the host-published CDP 
 
 | Tool | Purpose |
 |---|---|
-| `browser_open` | Open/return your browser; options: `network`, `wireguard_profile`, `tailscale_exit_node`, `expose`, `ttl_seconds`, `start_url`, `fresh` |
+| `browser_open` | Open/return your browser; options: `network`, `wireguard_profile`, `tailscale_exit_node`, `expose`, `ttl_seconds`, `idle_timeout_seconds`, `adblock`, `start_url`, `fresh` |
 | `browser_navigate` | Go to a URL, or search DuckDuckGo for plain text |
+| `browser_back` / `browser_forward` | History navigation (`moved=false` when there is nowhere to go) |
+| `browser_tabs` | `action=list` / `new` (with `url`) / `select` / `close` (with `index`); other tools act on the active tab |
+| `browser_wait_for` | Wait for a `selector` or `text` to become `visible` / `hidden` / `attached` / `detached` |
 | `browser_snapshot` | Page text + links (LLM-friendly) |
+| `browser_accessibility_snapshot` | ARIA tree as YAML; pair with `role=button[name="..."]` selectors |
 | `browser_screenshot` | PNG image |
 | `browser_click` / `browser_type` | Interact using CSS / Playwright selectors |
 | `browser_evaluate` | Run a JS expression in the page |

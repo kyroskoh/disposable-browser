@@ -82,7 +82,7 @@ sessions between tasks and users, and running browsers by hand for every agent i
 
 | Risk | Mitigation |
 |---|---|
-| The Docker socket gives the controller root-equivalent access | Bind to localhost, use bearer auth and remote access only over a tailnet or Access; a socket proxy is on the roadmap |
+| The Docker socket gives the controller root-equivalent access | The controller only reaches Docker through `docker-socket-proxy` (container endpoints only, on an internal network sessions can't join); bind to localhost, use bearer auth, and allow remote access only over a tailnet or Access |
 | Classic VNC auth is weak (8 characters) | Viewer bound to 127.0.0.1; remote sharing only through Cloudflare Access or a tailnet; per-session random password |
 | Chromium runs with `--no-sandbox` inside the container | The container is the sandbox (no caps, read-only, no-new-privileges, non-root); `CHROMIUM_SANDBOX=1` plus a seccomp profile is on the roadmap |
 | VPN leaks | WireGuard kill switch, plus a `WebRtcIPHandling` policy |

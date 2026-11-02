@@ -155,3 +155,73 @@ def test_cloudflare_quick_tunnel(api):
         assert url.startswith("https://") and url.endswith("/vnc.html")
     finally:
         api.delete(f"/v1/sessions/{s['id']}")
+
+
+def _tool(name: str, args: dict, rid: int) -> dict:
+    res = _rpc(TOKEN, "tools/call", {"name": name, "arguments": args}, rid)
+    assert "result" in res and not res["result"].get("isError"), res
+    result = res["result"]
+    sc = result.get("structuredContent")
+    if sc is not None:
+        return sc.get("result", sc) if isinstance(sc, dict) and set(sc) == {"result"} else sc
+    return json.loads(result["content"][0]["text"])
+
+
+def test_mcp_tabs_history_wait_and_accessibility(api):
+    init = {
+        "protocolVersion": "2025-06-18",
+        "capabilities": {},
+        "clientInfo": {"name": "e2e", "version": "0"},
+    }
+    assert "result" in _rpc(TOKEN, "initialize", init, 1)
+    try:
+        _tool("browser_navigate", {"url": "https://example.com/"}, 2)
+        _tool("browser_navigate", {"url": "https://example.org/"}, 3)
+        back = _tool("browser_back", {}, 4)
+        assert back["moved"] and "example.com" in back["url"], back
+
+        aria = _tool("browser_accessibility_snapshot", {}, 5)
+        assert 'heading "Example Domain"' in aria["aria"], aria
+        assert "Example Domain" in _tool("browser_wait_for", {"text": "Example Domain"}, 6)["title"]
+
+        tabs = _tool("browser_tabs", {"action": "new", "url": "https://example.net/"}, 7)["tabs"]
+        assert len(tabs) == 2 and tabs[1]["active"] and "example.net" in tabs[1]["url"]
+        # Stateless "current tab": the next call acts on the tab Chromium shows.
+        assert "example.net" in _tool("browser_snapshot", {}, 8)["url"]
+
+        tabs = _tool("browser_tabs", {"action": "select", "index": 0}, 9)["tabs"]
+        assert tabs[0]["active"] and "example.com" in _tool("browser_snapshot", {}, 10)["url"]
+        assert len(_tool("browser_tabs", {"action": "close", "index": 1}, 11)["tabs"]) == 1
+    finally:
+        _rpc(TOKEN, "tools/call", {"name": "browser_close", "arguments": {}}, 12)
+
+
+def test_adblock_extension_loaded_and_optional(api):
+    def extension_targets(cdp_url: str) -> list[dict]:
+        return [
+            t
+            for t in httpx.get(f"{cdp_url}/json/list", timeout=5).json()
+            if "chrome-extension://" in t["url"]
+        ]
+
+    on = api.post("/v1/sessions", json={}).json()
+    off = api.post("/v1/sessions", json={"adblock": False}).json()
+    try:
+        assert on["adblock"] is True and off["adblock"] is False
+        deadline, found = time.time() + 20, []
+        while time.time() < deadline and not found:
+            found = extension_targets(on["cdp_url"])
+            time.sleep(1)
+        assert found, "uBlock Origin Lite service worker never started"
+        assert extension_targets(off["cdp_url"]) == []
+    finally:
+        api.delete(f"/v1/sessions/{on['id']}")
+        api.delete(f"/v1/sessions/{off['id']}")
+
+
+def test_idle_timeout_destroys_unused_session(api):
+    s = api.post("/v1/sessions", json={"idle_timeout_seconds": 30}).json()
+    assert s["idle_timeout_seconds"] == 30
+    time.sleep(20)
+    assert api.get(f"/v1/sessions/{s['id']}").status_code == 200  # not before the timeout
+    wait_gone(api, s["id"], timeout=60)

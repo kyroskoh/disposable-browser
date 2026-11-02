@@ -23,7 +23,7 @@ and agents > simplicity of install (Docker only) > startup latency > density.
 - \+ Strong isolation and true deletion. Deleting the container is the whole cleanup.
 - \+ Simple mental model; works the same standalone (`docker run`) and managed.
 - − About 2–5 s startup and roughly 300–600 MB RAM per session (Chromium); density is limited by RAM.
-- − The controller needs the Docker socket (root-equivalent). Mitigated by a localhost bind and auth, with a socket proxy to come.
+- − The controller needs to create containers, which is close to root-equivalent. Mitigated by a localhost bind, auth, and (since v0.2) a docker-socket-proxy that only exposes container endpoints.
 - − Classic VNC is weak; shared viewers must sit behind Access or a tailnet.
 
 ## Alternatives considered

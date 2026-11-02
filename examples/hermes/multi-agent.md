@@ -14,11 +14,15 @@
 
 3. What each agent gets:
    - `browser_navigate("query or url")` auto-creates the agent's own Chromium on first use.
-   - `browser_snapshot`, `browser_click`, `browser_type`, `browser_screenshot`, `browser_evaluate`.
+   - `browser_snapshot`, `browser_accessibility_snapshot`, `browser_click`, `browser_type`,
+     `browser_wait_for`, `browser_back` / `browser_forward`, `browser_tabs`, `browser_screenshot`, `browser_evaluate`.
    - `browser_open(fresh=true)` gives a brand-new identity (new cookies, new fingerprint state).
    - `browser_open(network="wireguard", wireguard_profile="mullvad-sg")` routes that agent via a VPN.
    - `browser_open(expose="cloudflare")` returns a `public_url` so a human can watch or take over.
-   - `browser_close()` destroys everything. Sessions also expire after their TTL.
+   - `browser_close()` destroys everything. Sessions also expire after their TTL, or after
+     `idle_timeout_seconds` with no activity.
+   - Limit what each bot may do with `DBROWSER_AGENT_QUOTAS`, for example
+     `{"grok-bot": {"networks": ["wireguard"], "expose": ["none"], "max_ttl_seconds": 900}}`.
 
 4. Isolation guarantees: the agent identity comes from the token (the controller overwrites
    any `X-Dbrowser-Agent` header), `browser_list` only shows the caller's sessions, and

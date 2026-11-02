@@ -21,6 +21,11 @@ EXPECTED_TOOLS = {
     "browser_click",
     "browser_type",
     "browser_evaluate",
+    "browser_back",
+    "browser_forward",
+    "browser_tabs",
+    "browser_wait_for",
+    "browser_accessibility_snapshot",
 }
 
 
@@ -154,3 +159,84 @@ def test_fresh_gives_new_identity(client, runtime):
     first = payload(rpc.tool("browser_open"))
     second = payload(rpc.tool("browser_open", {"fresh": True}))
     assert first["id"] != second["id"] and len(runtime.list()) == 1
+
+
+def test_back_and_forward(client, ops):
+    rpc = Rpc(client, AGENT_A)
+    assert payload(rpc.tool("browser_back"))["moved"] is True
+    assert payload(rpc.tool("browser_forward"))["moved"] is False
+    assert [c[2] for c in ops.calls if c[0] == "history"] == ["back", "forward"]
+
+
+def test_tabs_lifecycle(client, ops):
+    rpc = Rpc(client, AGENT_A)
+    assert len(payload(rpc.tool("browser_tabs"))["tabs"]) == 1
+
+    tabs = payload(rpc.tool("browser_tabs", {"action": "new", "url": "privacy news"}))["tabs"]
+    assert tabs[1]["url"] == "https://duckduckgo.com/?q=privacy+news" and tabs[1]["active"]
+
+    tabs = payload(rpc.tool("browser_tabs", {"action": "select", "index": 0}))["tabs"]
+    assert tabs[0]["active"] and not tabs[1]["active"]
+
+    assert len(payload(rpc.tool("browser_tabs", {"action": "close", "index": 1}))["tabs"]) == 1
+    # Closing the last tab would end the session; the tool refuses.
+    assert rpc.tool("browser_tabs", {"action": "close", "index": 0}).get("isError")
+    # select/close need an index; a bad index is an error, not a crash.
+    assert rpc.tool("browser_tabs", {"action": "select"}).get("isError")
+    assert rpc.tool("browser_tabs", {"action": "select", "index": 9}).get("isError")
+
+
+def test_wait_for(client, ops):
+    rpc = Rpc(client, AGENT_A)
+    out = payload(rpc.tool("browser_wait_for", {"text": "Results", "timeout_ms": 999_999}))
+    assert out["title"] == "waited"
+    assert ops.calls[-1][2] == (None, "Results", "visible", 60_000)  # timeout clamped
+    assert rpc.tool("browser_wait_for", {"selector": "#a", "text": "b"}).get("isError")
+    assert rpc.tool("browser_wait_for", {"selector": "#a", "state": "bogus"}).get("isError")
+
+
+def test_accessibility_snapshot(client, ops):
+    rpc = Rpc(client, AGENT_A)
+    out = payload(rpc.tool("browser_accessibility_snapshot", {"max_chars": 1}))
+    assert 'button "Search"' in out["aria"]
+    assert ops.calls[-1][2] == ("body", 500)  # max_chars clamped to the floor
+
+
+def test_open_passes_idle_and_adblock(client, runtime):
+    rpc = Rpc(client, AGENT_A)
+    s = payload(rpc.tool("browser_open", {"idle_timeout_seconds": 90, "adblock": False}))
+    assert s["idle_timeout_seconds"] == 90 and s["adblock"] is False
+    env = runtime.specs[f"dbrowser-{s['id']}"].env
+    assert env["IDLE_TIMEOUT"] == "90" and env["ADBLOCK"] == "0"
+
+
+def test_agent_quota_enforced_over_mcp(settings, runtime, ops):
+    settings.agent_quotas = '{"agent-a": {"expose": ["none"], "max_ttl_seconds": 120}}'
+    with TestClient(create_app(settings, runtime=runtime, ops=ops, probe=lambda url: True)) as c:
+        a, b = Rpc(c, AGENT_A), Rpc(c, AGENT_B)
+        denied = a.tool("browser_open", {"expose": "cloudflare"})
+        assert denied.get("isError") and "expose=cloudflare" in json.dumps(denied)
+        s = payload(a.tool("browser_open", {"ttl_seconds": 3600}))
+        assert s["expose"] == "none"
+        assert payload(b.tool("browser_open", {"expose": "cloudflare"}))["expose"] == "cloudflare"
+
+
+def test_malformed_quota_fails_at_startup(settings, runtime, ops):
+    settings.agent_quotas = "{nope"
+    with pytest.raises(ValueError, match="AGENT_QUOTAS"):
+        create_app(settings, runtime=runtime, ops=ops, probe=lambda url: True)
+
+
+def test_tool_schemas_survive_error_wrapper(client):
+    tools = {t["name"]: t for t in Rpc(client, ADMIN).call("tools/list")["tools"]}
+    props = tools["browser_tabs"]["inputSchema"]["properties"]
+    assert {"action", "index", "url", "session_id"} <= set(props) and "ctx" not in props
+    assert tools["browser_tabs"]["description"].startswith("List, open, switch or close tabs")
+
+
+def test_expected_errors_reach_the_agent(client):
+    rpc = Rpc(client, AGENT_A)
+    spoof = rpc.tool("browser_open", {"agent_id": "agent-b"})
+    assert spoof.get("isError") and "does not match the authenticated agent" in json.dumps(spoof)
+    last = rpc.tool("browser_tabs", {"action": "close", "index": 0})
+    assert "last tab" in json.dumps(last)

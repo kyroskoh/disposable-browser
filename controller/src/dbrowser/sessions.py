@@ -37,6 +37,10 @@ class SessionNotReady(SessionError):
     status = 504
 
 
+class QuotaExceeded(SessionError):
+    status = 403
+
+
 def probe_cdp(url: str) -> bool:
     try:
         return httpx.get(f"{url}/json/version", timeout=2.0).status_code == 200
@@ -85,6 +89,7 @@ class SessionManager:
 
     # ---- commands ------------------------------------------------------
     def create(self, req: SessionCreate) -> Session:
+        req = self._apply_quota(req)
         with self._lock:
             if req.agent_id and req.reuse:
                 existing = self.find_by_agent(req.agent_id)
@@ -125,6 +130,41 @@ class SessionManager:
         return removed
 
     # ---- internals -----------------------------------------------------
+    def _apply_quota(self, req: SessionCreate) -> SessionCreate:
+        """Reject what the agent's quota forbids and clamp what it caps. No quota: unchanged."""
+        if not req.agent_id:
+            return req
+        quotas = self.settings.agent_quota_map()
+        q = quotas.get(req.agent_id) or quotas.get("*")
+        if q is None:
+            return req
+        who = f"agent '{req.agent_id}'"
+        if q.networks is not None and req.network not in q.networks:
+            raise QuotaExceeded(f"{who} may not use network={req.network.value}")
+        if q.expose is not None and req.expose not in q.expose:
+            raise QuotaExceeded(f"{who} may not use expose={req.expose.value}")
+        if (
+            q.wireguard_profiles is not None
+            and req.wireguard_profile
+            and req.wireguard_profile not in q.wireguard_profiles
+        ):
+            raise QuotaExceeded(f"{who} may not use WireGuard profile '{req.wireguard_profile}'")
+        update: dict[str, int] = {}
+        if q.max_ttl_seconds:
+            update["ttl_seconds"] = min(
+                req.ttl_seconds or self.settings.default_ttl_seconds, q.max_ttl_seconds
+            )
+        if q.max_idle_timeout_seconds:
+            # 0 means "off", which the cap must not allow, so it becomes the cap itself.
+            idle = self._idle(req) or q.max_idle_timeout_seconds
+            update["idle_timeout_seconds"] = min(idle, q.max_idle_timeout_seconds)
+        return req.model_copy(update=update) if update else req
+
+    def _idle(self, req: SessionCreate) -> int:
+        if req.idle_timeout_seconds is not None:
+            return req.idle_timeout_seconds
+        return self.settings.idle_timeout_seconds
+
     @staticmethod
     def _name(session_id: str) -> str:
         if not re.fullmatch(r"[a-f0-9]{12}", session_id):
@@ -137,13 +177,18 @@ class SessionManager:
         ttl = min(req.ttl_seconds or s.default_ttl_seconds, s.max_ttl_seconds)
         now = self._clock()
         vnc_password = secrets.token_hex(4)  # classic VNC auth uses 8 chars
+        idle = self._idle(req)
+        adblock = s.adblock if req.adblock is None else req.adblock
         env = {
             "NET_MODE": req.network.value,
             "EXPOSE_MODE": req.expose.value,
             "START_URL": req.start_url,
             "VNC_PASSWORD": vnc_password,
             "ENABLE_CDP": "1",
+            "ADBLOCK": "1" if adblock else "0",
         }
+        if idle:
+            env["IDLE_TIMEOUT"] = str(idle)
         if s.doh_template:
             env["DOH_TEMPLATE"] = s.doh_template
         cap_add: list[str] = []
@@ -175,6 +220,8 @@ class SessionManager:
             "dbrowser.network": req.network.value,
             "dbrowser.expose": req.expose.value,
             "dbrowser.vnc_password": vnc_password,
+            "dbrowser.idle": str(idle),
+            "dbrowser.adblock": "1" if adblock else "0",
         }
         spec = ContainerSpec(
             name=f"dbrowser-{sid}",
@@ -237,6 +284,8 @@ class SessionManager:
             expose=ExposeMode(lbl.get("dbrowser.expose", "none")),
             created_at=datetime.fromtimestamp(float(lbl.get("dbrowser.created", "0")), UTC),
             expires_at=datetime.fromtimestamp(float(lbl.get("dbrowser.expires", "0")), UTC),
+            idle_timeout_seconds=int(lbl.get("dbrowser.idle", "0") or 0),
+            adblock=lbl.get("dbrowser.adblock") == "1",
             viewer_url=(
                 f"http://{host}:{vport}/vnc.html?autoconnect=1&resize=remote&password={pw}" if vport else None
             ),

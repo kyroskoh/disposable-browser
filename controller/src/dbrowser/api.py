@@ -71,6 +71,7 @@ def create_app(
         from .runtime import DockerRuntime
 
         runtime = DockerRuntime()
+    settings.agent_quota_map()  # fail fast on a malformed DBROWSER_AGENT_QUOTAS
     manager = SessionManager(runtime, settings, probe=probe)
     mcp = build_mcp(manager, ops or PlaywrightOps())
     mcp_app = http_app(mcp)

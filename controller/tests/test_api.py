@@ -55,3 +55,11 @@ def test_errors_map_to_status(client):
     for _ in range(3):
         assert client.post("/v1/sessions", json={}, headers=H).status_code == 201
     assert client.post("/v1/sessions", json={}, headers=H).status_code == 429
+
+
+def test_quota_violation_is_403(settings, runtime):
+    settings.agent_quotas = '{"*": {"networks": ["direct"]}}'
+    settings.tailscale_authkey = "tskey-auth-x"
+    with TestClient(create_app(settings, runtime=runtime, ops=FakeOps(), probe=lambda url: True)) as c:
+        r = c.post("/v1/sessions", json={"agent_id": "bot", "network": "tailscale"}, headers=H)
+        assert r.status_code == 403 and "network=tailscale" in r.json()["detail"]

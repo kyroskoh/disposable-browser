@@ -5,6 +5,7 @@ from typing import Any
 
 import pytest
 
+from dbrowser.browser_ops import BrowserOpsError
 from dbrowser.config import Settings
 from dbrowser.runtime import CDP_PORT, VIEWER_PORT, ContainerInfo, ContainerSpec
 from dbrowser.sessions import SessionManager
@@ -55,8 +56,18 @@ class FakeRuntime:
 
 
 class FakeOps:
+    """Records calls; keeps a tiny tab model so tab tools can be exercised."""
+
     def __init__(self) -> None:
         self.calls: list[tuple[str, str, Any]] = []
+        self.tab_urls = ["https://duckduckgo.com/"]
+        self.active = 0
+
+    def _tabs(self):
+        return [
+            {"index": i, "url": u, "title": u, "active": i == self.active}
+            for i, u in enumerate(self.tab_urls)
+        ]
 
     async def navigate(self, cdp_url, url):
         self.calls.append(("navigate", cdp_url, url))
@@ -87,6 +98,48 @@ class FakeOps:
     async def evaluate(self, cdp_url, expression):
         self.calls.append(("evaluate", cdp_url, expression))
         return 42
+
+    async def aria_snapshot(self, cdp_url, selector, max_chars):
+        self.calls.append(("aria", cdp_url, (selector, max_chars)))
+        return {
+            "url": "https://duckduckgo.com/",
+            "title": "DuckDuckGo",
+            "aria": '- button "Search"',
+            "truncated": False,
+        }
+
+    async def history(self, cdp_url, direction):
+        self.calls.append(("history", cdp_url, direction))
+        return {"url": "https://duckduckgo.com/", "title": direction, "moved": direction == "back"}
+
+    async def wait_for(self, cdp_url, selector, text, state, timeout_ms):
+        self.calls.append(("wait_for", cdp_url, (selector, text, state, timeout_ms)))
+        return {"url": "https://duckduckgo.com/", "title": "waited"}
+
+    async def tabs(self, cdp_url):
+        self.calls.append(("tabs", cdp_url, None))
+        return self._tabs()
+
+    async def new_tab(self, cdp_url, url):
+        self.calls.append(("new_tab", cdp_url, url))
+        self.tab_urls.append(url)
+        self.active = len(self.tab_urls) - 1
+        return self._tabs()
+
+    async def select_tab(self, cdp_url, index):
+        self.calls.append(("select_tab", cdp_url, index))
+        if not 0 <= index < len(self.tab_urls):
+            raise BrowserOpsError(f"no tab {index}")
+        self.active = index
+        return self._tabs()
+
+    async def close_tab(self, cdp_url, index):
+        self.calls.append(("close_tab", cdp_url, index))
+        if len(self.tab_urls) == 1:
+            raise BrowserOpsError("refusing to close the last tab")
+        self.tab_urls.pop(index)
+        self.active = min(self.active, len(self.tab_urls) - 1)
+        return self._tabs()
 
 
 class Clock:

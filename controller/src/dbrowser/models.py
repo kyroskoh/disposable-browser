@@ -3,9 +3,10 @@ from __future__ import annotations
 from datetime import datetime
 from enum import StrEnum
 
-from pydantic import BaseModel, Field, field_validator, model_validator
+from pydantic import BaseModel, ConfigDict, Field, field_validator, model_validator
 
 NAME_PATTERN = r"^[A-Za-z0-9][A-Za-z0-9_.-]{0,63}$"
+MIN_IDLE_SECONDS = 30
 
 
 class NetworkMode(StrEnum):
@@ -29,6 +30,14 @@ class SessionCreate(BaseModel):
     tailscale_exit_node: str | None = Field(default=None, pattern=r"^[A-Za-z0-9][A-Za-z0-9_.:-]{0,252}$")
     expose: ExposeMode = ExposeMode.none
     ttl_seconds: int | None = Field(default=None, ge=60)
+    idle_timeout_seconds: int | None = Field(
+        default=None,
+        ge=0,
+        description=f"Destroy after this long with no CDP/VNC client; 0 = off, else >= {MIN_IDLE_SECONDS}.",
+    )
+    adblock: bool | None = Field(
+        default=None, description="Load uBlock Origin Lite (default: server setting)."
+    )
     start_url: str = "https://duckduckgo.com/"
     reuse: bool = Field(default=True, description="Return the agent's existing session instead of a new one.")
 
@@ -37,6 +46,13 @@ class SessionCreate(BaseModel):
     def _http_only(cls, v: str) -> str:
         if not v.startswith(("https://", "http://")) or len(v) > 2048 or any(c in v for c in "\"'\\ \n"):
             raise ValueError("start_url must be a plain http(s) URL")
+        return v
+
+    @field_validator("idle_timeout_seconds")
+    @classmethod
+    def _idle_floor(cls, v: int | None) -> int | None:
+        if v and v < MIN_IDLE_SECONDS:
+            raise ValueError(f"idle_timeout_seconds must be 0 (off) or >= {MIN_IDLE_SECONDS}")
         return v
 
     @model_validator(mode="after")
@@ -58,9 +74,24 @@ class Session(BaseModel):
     expose: ExposeMode
     created_at: datetime
     expires_at: datetime
+    idle_timeout_seconds: int = Field(default=0, description="0 = no idle timeout.")
+    adblock: bool = False
     viewer_url: str | None = Field(description="noVNC URL (includes the one-time VNC password).")
     vnc_password: str
     cdp_url: str | None = Field(
         description="Chrome DevTools endpoint for Playwright/Puppeteer connectOverCDP."
     )
     public_url: str | None = Field(default=None, description="Cloudflare / Tailscale URL when exposed.")
+
+
+class AgentQuota(BaseModel):
+    """Limits for one agent (DBROWSER_AGENT_QUOTAS). Omitted fields mean "no extra limit"."""
+
+    model_config = ConfigDict(extra="forbid")
+
+    max_ttl_seconds: int | None = Field(default=None, ge=60)
+    # Upper bound on the idle timeout; also forces one on when the request asks for none.
+    max_idle_timeout_seconds: int | None = Field(default=None, ge=MIN_IDLE_SECONDS)
+    networks: list[NetworkMode] | None = None
+    expose: list[ExposeMode] | None = None
+    wireguard_profiles: list[str] | None = None

@@ -1,12 +1,16 @@
 from __future__ import annotations
 
+import json
 import secrets
 from functools import lru_cache
 from pathlib import Path
-from typing import Literal
+from typing import TYPE_CHECKING, Literal
 
-from pydantic import Field
+from pydantic import Field, field_validator
 from pydantic_settings import BaseSettings, SettingsConfigDict
+
+if TYPE_CHECKING:
+    from .models import AgentQuota
 
 
 class Settings(BaseSettings):
@@ -25,6 +29,13 @@ class Settings(BaseSettings):
     max_ttl_seconds: int = Field(default=86400, ge=60)
     reap_interval_seconds: int = Field(default=30, ge=5)
     ready_timeout_seconds: float = Field(default=30.0, gt=0)
+    # Destroy a session after this many seconds with no CDP or VNC connection (0 = off).
+    idle_timeout_seconds: int = Field(default=0, ge=0)
+    # Load the bundled uBlock Origin Lite extension in every session (overridable per session).
+    adblock: bool = True
+    # JSON object of per-agent limits, keyed by agent id or "*" (every other agent), e.g.
+    # {"grok-bot": {"max_ttl_seconds": 900, "networks": ["wireguard"], "expose": ["none"]}}
+    agent_quotas: str = ""
 
     # How URLs handed back to clients are built.
     public_host: str = "localhost"
@@ -44,6 +55,13 @@ class Settings(BaseSettings):
     cloudflare_tunnel_hostname: str = ""
     doh_template: str = ""
 
+    @field_validator("idle_timeout_seconds")
+    @classmethod
+    def _idle_floor(cls, v: int) -> int:
+        if 0 < v < 30:
+            raise ValueError("DBROWSER_IDLE_TIMEOUT_SECONDS must be 0 (off) or >= 30")
+        return v
+
     def agent_token_map(self) -> dict[str, str]:
         """token -> agent_id."""
         out: dict[str, str] = {}
@@ -55,6 +73,20 @@ class Settings(BaseSettings):
                 )
             out[token] = agent
         return out
+
+    def agent_quota_map(self) -> dict[str, AgentQuota]:
+        """agent_id (or "*") -> quota. Raises ValueError on malformed JSON or unknown keys."""
+        from .models import AgentQuota
+
+        if not self.agent_quotas.strip():
+            return {}
+        try:
+            raw = json.loads(self.agent_quotas)
+        except json.JSONDecodeError as e:
+            raise ValueError(f"DBROWSER_AGENT_QUOTAS is not valid JSON: {e}") from e
+        if not isinstance(raw, dict):
+            raise ValueError("DBROWSER_AGENT_QUOTAS must be a JSON object keyed by agent id")
+        return {agent: AgentQuota.model_validate(q) for agent, q in raw.items()}
 
     def resolved_token(self) -> str:
         if not self.api_token:
