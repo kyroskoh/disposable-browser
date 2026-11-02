@@ -5,6 +5,10 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 
 ## [Unreleased]
 
+### Changed
+- README restructured to the house template: emoji sections, Key libraries, Acknowledgments, Support, footer.
+- `CONTRIBUTION.md` renamed to `CONTRIBUTING.md`, the name GitHub recognises.
+
 ## [0.1.0] - 2026-11-01
 
 ### Added
@@ -24,7 +28,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 - Standalone scripts `scripts/browse.sh` and `scripts/browse.ps1`.
 - Examples for Hermes Agent and multi-agent (Grok bot) setups, generic MCP clients, and Playwright.
 - CI: ruff, pytest (43 unit tests), shellcheck, hadolint, a standalone image smoke test, and end-to-end tests against real Docker.
-- Docs: PRD, README, ROADMAP, ENHANCEMENT, CONTRIBUTION, SECURITY, CODE_OF_CONDUCT, ADR 0001.
+- Docs: PRD, README, ROADMAP, ENHANCEMENT, CONTRIBUTING, SECURITY, CODE_OF_CONDUCT, ADR 0001.
 
 [Unreleased]: https://github.com/kyroskoh/disposable-browser/compare/v0.1.0...HEAD
 [0.1.0]: https://github.com/kyroskoh/disposable-browser/releases/tag/v0.1.0
