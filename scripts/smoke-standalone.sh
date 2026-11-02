@@ -8,16 +8,10 @@ NAME="dbrowser-smoke-$$"
 
 docker run -d --rm --name "$NAME" --read-only --tmpfs /tmp:rw,nosuid,nodev,mode=1777 \
   --shm-size=1g -p 127.0.0.1::6080 -p 127.0.0.1::9223 -e VNC_PASSWORD=smoketst "$IMAGE" >/dev/null
-# shellcheck disable=SC2329  # invoked via trap
-on_exit() {
-  local rc=$?
-  if (( rc != 0 )); then
-    echo "--- container logs ($NAME) ---"
-    docker logs "$NAME" 2>&1 | tail -n 100 || true
-  fi
-  docker rm -f "$NAME" >/dev/null 2>&1 || true
-}
-trap on_exit EXIT
+# On failure, show the container's logs before removing it. Inline rather than a
+# function: shellcheck versions disagree on whether trap-only functions are "unused".
+trap '[ $? -eq 0 ] || { echo "--- container logs ($NAME) ---"; docker logs "$NAME" 2>&1 | tail -n 100; };
+      docker rm -f "$NAME" >/dev/null 2>&1 || true' EXIT
 
 viewer_port="$(docker port "$NAME" 6080/tcp | head -n1 | cut -d: -f2)"
 cdp_port="$(docker port "$NAME" 9223/tcp | head -n1 | cut -d: -f2)"

@@ -24,9 +24,9 @@ jobs:
           cache-dependency-path: controller/pyproject.toml
       - run: pip install -e ".[dev]"
       - run: ruff check . && ruff format --check .
-      - run: pytest -q
+      - run: ../scripts/ci-annotate.sh pytest pytest -q
       - name: shellcheck entrypoint
-        run: shellcheck ../browser/entrypoint.sh ../scripts/*.sh
+        run: ../scripts/ci-annotate.sh shellcheck shellcheck ../browser/entrypoint.sh ../scripts/*.sh
 
   hadolint:
     runs-on: ubuntu-latest
@@ -64,9 +64,9 @@ jobs:
       - name: Install test deps
         run: pip install -e "controller[dev]"
       - name: Smoke test (standalone image, no controller)
-        run: bash scripts/smoke-standalone.sh
+        run: scripts/ci-annotate.sh smoke bash scripts/smoke-standalone.sh
       - name: End-to-end tests
-        run: pytest -m integration -v controller/tests/integration
+        run: scripts/ci-annotate.sh e2e pytest -m integration -v controller/tests/integration
       - name: Logs on failure
         if: failure()
         run: |
