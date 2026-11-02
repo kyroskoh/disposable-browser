@@ -138,8 +138,14 @@ class PlaywrightOps:
     async def history(self, cdp_url: str, direction: Literal["back", "forward"]) -> dict[str, Any]:
         async with self._page(cdp_url) as page:
             go = page.go_back if direction == "back" else page.go_forward
-            moved = await go(wait_until="domcontentloaded") is not None
-            return {**await self._state(page), "moved": moved}
+            before = page.url
+            # A back/forward-cache restore fires no new DOMContentLoaded, so waiting for it
+            # would hang until the timeout. Wait for the commit, then for a load state, which
+            # returns at once when the restored page is already loaded. The response is None
+            # both for "no history" and for bfcache restores, so judge movement by the URL.
+            await go(wait_until="commit")
+            await page.wait_for_load_state("domcontentloaded")
+            return {**await self._state(page), "moved": page.url != before}
 
     async def wait_for(
         self, cdp_url: str, selector: str | None, text: str | None, state: WaitState, timeout_ms: int
