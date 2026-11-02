@@ -1,0 +1,82 @@
+name: disposable-browser
+
+# Quickstart:
+#   cp .env.example .env            # set DBROWSER_API_TOKEN
+#   docker compose --profile build build
+#   docker compose up -d            # dashboard: http://localhost:8080
+# Optional remote access to the dashboard/MCP:
+#   docker compose --profile cloudflare up -d    (needs CLOUDFLARE_TUNNEL_TOKEN)
+#   docker compose --profile tailscale up -d     (needs TS_AUTHKEY)
+
+services:
+  # Build-only service so `docker compose --profile build build` tags the browser image
+  # the controller launches per session.
+  browser:
+    profiles: [build]
+    build: ./browser
+    image: ${DBROWSER_BROWSER_IMAGE:-disposable-browser/browser:dev}
+
+  controller:
+    build:
+      context: .
+      dockerfile: controller/Dockerfile
+    image: disposable-browser/controller:dev
+    restart: unless-stopped
+    env_file:
+      - path: .env
+        required: false
+    environment:
+      DBROWSER_DOCKER_NETWORK: dbrowser
+      DBROWSER_CDP_ACCESS: internal
+      DBROWSER_WIREGUARD_PROFILES_DIR: /wg-profiles
+    ports:
+      - "${DBROWSER_BIND:-127.0.0.1}:${DBROWSER_PORT:-8080}:8080"
+    volumes:
+      # Root-equivalent access to Docker: keep the controller off public networks
+      # (see SECURITY.md; a docker-socket-proxy is on the roadmap).
+      - /var/run/docker.sock:/var/run/docker.sock
+      - ./wireguard:/wg-profiles:ro
+    group_add:
+      - "${DOCKER_GID:-0}"
+    read_only: true
+    tmpfs: [/tmp]
+    security_opt: [no-new-privileges:true]
+    cap_drop: [ALL]
+    networks: [dbrowser]
+
+  # Publish the dashboard + MCP endpoint through a Cloudflare named tunnel.
+  # In the Cloudflare dashboard route your hostname to http://controller:8080
+  # and protect it with Cloudflare Access.
+  cloudflared:
+    profiles: [cloudflare]
+    image: cloudflare/cloudflared:2024.12.2
+    restart: unless-stopped
+    command: tunnel --no-autoupdate run
+    environment:
+      TUNNEL_TOKEN: ${CLOUDFLARE_TUNNEL_TOKEN:-}
+    depends_on: [controller]
+    networks: [dbrowser]
+
+  # Put the dashboard + MCP endpoint on your tailnet at https://dbrowser.<tailnet>.ts.net
+  tailscale:
+    profiles: [tailscale]
+    image: tailscale/tailscale:v1.78.1
+    restart: unless-stopped
+    hostname: dbrowser
+    environment:
+      TS_AUTHKEY: ${TS_AUTHKEY:-}
+      TS_STATE_DIR: /var/lib/tailscale
+      TS_USERSPACE: "true"
+      TS_SERVE_CONFIG: /config/serve.json
+    volumes:
+      - ./deploy/tailscale:/config:ro
+      - tailscale-state:/var/lib/tailscale
+    depends_on: [controller]
+    networks: [dbrowser]
+
+networks:
+  dbrowser:
+    name: dbrowser
+
+volumes:
+  tailscale-state:

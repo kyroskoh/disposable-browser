@@ -1,0 +1,13 @@
+# Hermes Agent (Nous Research) — add Disposable Browser as an MCP server.
+# Merge into ~/.hermes/config.yaml (or the profile config of each agent).
+# Check the key names against your Hermes version's MCP docs if they differ.
+#
+# Give every agent its OWN token from DBROWSER_AGENT_TOKENS so each one gets an
+# isolated browser and cannot see or drive another agent's session.
+
+mcp_servers:
+  disposable_browser:
+    url: "http://localhost:8080/mcp/"        # or https://dbrowser.<tailnet>.ts.net/mcp/
+    headers:
+      Authorization: "Bearer ${DBROWSER_AGENT_TOKEN}"
+    timeout: 120
