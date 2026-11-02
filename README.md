@@ -7,7 +7,11 @@ Close the window, call `DELETE`, or let the TTL run out, and the container goes 
 tmpfs profile, so cookies, history, cache and storage are gone. The next session starts clean.
 
 [![CI](https://github.com/kyroskoh/disposable-browser/actions/workflows/ci.yml/badge.svg)](https://github.com/kyroskoh/disposable-browser/actions/workflows/ci.yml)
-License: MIT · Status: v0.1.0 (alpha)
+[![License: MIT](https://img.shields.io/badge/License-MIT-yellow.svg)](LICENSE.md)
+[![Release](https://img.shields.io/github/v/release/kyroskoh/disposable-browser?include_prereleases)](https://github.com/kyroskoh/disposable-browser/releases)
+[![Status: alpha](https://img.shields.io/badge/status-alpha-orange.svg)](ROADMAP.md)
+[![Docker](https://img.shields.io/badge/runs%20on-Docker-2496ED?logo=docker&logoColor=white)](docker-compose.yml)
+[![MCP](https://img.shields.io/badge/MCP-server-6E56CF)](examples/mcp-clients.md)
 
 ## Features
 
