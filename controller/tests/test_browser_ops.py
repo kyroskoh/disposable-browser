@@ -1,7 +1,7 @@
-"""Unit tests for PlaywrightOps' current-tab bookkeeping (no browser needed)."""
+"""Unit tests for PlaywrightOps' tab bookkeeping (no browser needed)."""
 
 from dbrowser import browser_ops
-from dbrowser.browser_ops import PlaywrightOps, _pick_active
+from dbrowser.browser_ops import PlaywrightOps, _pick_active, _stable_order
 
 
 def test_remembered_tab_wins_over_devtools_order():
@@ -18,11 +18,21 @@ def test_falls_back_to_last_tab_without_any_information():
     assert _pick_active(["a", "b", None], None, []) == 2
 
 
+def test_stable_order_ignores_attach_order_between_connections():
+    # Regression: each call reconnects and Playwright may list pages in a different order.
+    assert _stable_order(["a", "b"], ["b", "a"]) == [1, 0]
+
+
+def test_stable_order_appends_new_tabs_and_drops_closed_ones():
+    ids = ["c", None, "b", "a"]
+    assert [ids[i] for i in _stable_order(["a", "gone", "b"], ids)] == ["a", "b", "c", None]
+
+
 def test_remembered_sessions_are_bounded(monkeypatch):
     monkeypatch.setattr(browser_ops, "MAX_REMEMBERED_SESSIONS", 2)
     ops = PlaywrightOps()
-    ops._remember("s1", "a")
-    ops._remember("s2", "b")
-    ops._remember("s1", "c")  # refresh s1, so s2 is the oldest
-    ops._remember("s3", "d")
-    assert dict(ops._selected) == {"s1": "c", "s3": "d"}
+    ops._session("s1").selected = "a"
+    ops._session("s2").selected = "b"
+    ops._session("s1")  # touch s1, so s2 is the oldest
+    ops._session("s3").selected = "d"
+    assert {k: v.selected for k, v in ops._sessions.items()} == {"s1": "a", "s3": "d"}

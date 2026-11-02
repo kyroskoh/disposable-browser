@@ -1,11 +1,13 @@
 """Drive a session's Chromium over CDP with Playwright. Each call connects, acts, disconnects.
 
-"The current tab" is the one an agent last opened or selected: PlaywrightOps remembers its
-CDP target id per session (in memory, bounded). Chromium can't be asked reliably: pages
-created over CDP open in their own windows, so bringing one to the front doesn't change
-DevTools' /json/list activation order, and document.visibilityState reads "visible"
-everywhere. /json/list order is only the fallback, e.g. after a controller restart or when
-the remembered tab has been closed.
+Tabs are numbered in a stable order, and "the current tab" is the one an agent last opened
+or selected. PlaywrightOps remembers both per session (in memory, bounded), keyed by CDP
+target id, because Chromium can't be asked reliably: every call reconnects and Playwright
+lists pages in attach order, which varies between connections; pages created over CDP open
+in their own windows, so bringing one to the front doesn't change DevTools' /json/list
+activation order; and document.visibilityState reads "visible" everywhere. /json/list
+order is only the fallback, e.g. after a controller restart or when the remembered tab is
+closed.
 """
 
 from __future__ import annotations
@@ -15,6 +17,7 @@ import contextlib
 import logging
 from collections import OrderedDict
 from contextlib import asynccontextmanager
+from dataclasses import dataclass, field
 from typing import Any, Literal, Protocol
 
 import httpx
@@ -64,6 +67,25 @@ async def _target_id(ctx, page) -> str | None:
         return None
 
 
+@dataclass
+class _TabState:
+    order: list[str] = field(default_factory=list)  # target ids in the order agents see them
+    selected: str | None = None  # target id of the tab last opened or selected
+
+
+def _stable_order(known: list[str], ids: list[str | None]) -> list[int]:
+    """Indices into `ids`: known tabs in their remembered order, then new ones, then unidentified."""
+    pos = {tid: i for i, tid in enumerate(known)}
+
+    def key(i: int) -> tuple[int, int]:
+        tid = ids[i]
+        if tid in pos:
+            return (0, pos[tid])
+        return (1 if tid is not None else 2, i)
+
+    return sorted(range(len(ids)), key=key)
+
+
 def _pick_active(ids: list[str | None], selected: str | None, devtools_order: list[str]) -> int:
     """Index of the current tab: the remembered one, else Chromium's most recent, else the last."""
     if selected is not None and selected in ids:
@@ -76,20 +98,29 @@ def _pick_active(ids: list[str | None], selected: str | None, devtools_order: li
 class PlaywrightOps:
     def __init__(self, timeout_ms: int = 30_000) -> None:
         self.timeout_ms = timeout_ms
-        # cdp_url -> target id of the tab an agent last opened or selected (insertion-ordered).
-        self._selected: OrderedDict[str, str] = OrderedDict()
+        self._sessions: OrderedDict[str, _TabState] = OrderedDict()  # cdp_url -> tabs, LRU
 
-    def _remember(self, cdp_url: str, target_id: str) -> None:
-        self._selected[cdp_url] = target_id
-        self._selected.move_to_end(cdp_url)
-        while len(self._selected) > MAX_REMEMBERED_SESSIONS:
-            self._selected.popitem(last=False)
+    def _session(self, cdp_url: str) -> _TabState:
+        state = self._sessions.setdefault(cdp_url, _TabState())
+        self._sessions.move_to_end(cdp_url)
+        while len(self._sessions) > MAX_REMEMBERED_SESSIONS:
+            self._sessions.popitem(last=False)
+        return state
 
-    async def _active_index(self, ctx, pages: list, cdp_url: str) -> int:
-        if len(pages) <= 1:
-            return 0
+    async def _tabs(self, ctx, cdp_url: str) -> tuple[list, list[str | None]]:
+        """User tabs in stable order, with their target ids."""
+        pages = _user_pages(ctx)
         ids = list(await asyncio.gather(*(_target_id(ctx, p) for p in pages)))
-        selected = self._selected.get(cdp_url)
+        state = self._session(cdp_url)
+        idx = _stable_order(state.order, ids)
+        pages, ids = [pages[i] for i in idx], [ids[i] for i in idx]
+        state.order = [tid for tid in ids if tid is not None]
+        return pages, ids
+
+    async def _active_index(self, ids: list[str | None], cdp_url: str) -> int:
+        if len(ids) <= 1:
+            return 0
+        selected = self._session(cdp_url).selected
         order: list[str] = []
         if selected not in ids:
             try:
@@ -100,11 +131,10 @@ class PlaywrightOps:
                 log.warning("could not read %s/json/list; assuming the last tab is active", cdp_url)
         return _pick_active(ids, selected, order)
 
-    async def _activate(self, ctx, page, cdp_url: str) -> None:
+    async def _activate(self, page, target_id: str | None, cdp_url: str) -> None:
         await page.bring_to_front()  # for a human watching the viewer
-        tid = await _target_id(ctx, page)
-        if tid is not None:
-            self._remember(cdp_url, tid)
+        if target_id is not None:
+            self._session(cdp_url).selected = target_id
 
     @asynccontextmanager
     async def _context(self, cdp_url: str):
@@ -121,8 +151,8 @@ class PlaywrightOps:
     @asynccontextmanager
     async def _page(self, cdp_url: str):
         async with self._context(cdp_url) as ctx:
-            pages = _user_pages(ctx)
-            page = pages[await self._active_index(ctx, pages, cdp_url)] if pages else await ctx.new_page()
+            pages, ids = await self._tabs(ctx, cdp_url)
+            page = pages[await self._active_index(ids, cdp_url)] if pages else await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             yield page
 
@@ -212,36 +242,38 @@ class PlaywrightOps:
 
     async def tabs(self, cdp_url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
-            pages = _user_pages(ctx)
-            return await self._tab_list(pages, await self._active_index(ctx, pages, cdp_url))
+            pages, ids = await self._tabs(ctx, cdp_url)
+            return await self._tab_list(pages, await self._active_index(ids, cdp_url))
 
     async def new_tab(self, cdp_url: str, url: str) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
+            await self._tabs(ctx, cdp_url)  # record the existing order before adding a tab
             page = await ctx.new_page()
             page.set_default_timeout(self.timeout_ms)
             await page.goto(url, wait_until="domcontentloaded")
-            await self._activate(ctx, page, cdp_url)
-            pages = _user_pages(ctx)
-            return await self._tab_list(pages, pages.index(page))
+            pages, ids = await self._tabs(ctx, cdp_url)  # the new tab sorts last
+            active = pages.index(page)
+            await self._activate(page, ids[active], cdp_url)
+            return await self._tab_list(pages, active)
 
     async def select_tab(self, cdp_url: str, index: int) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
-            pages = _user_pages(ctx)
+            pages, ids = await self._tabs(ctx, cdp_url)
             self._check_index(pages, index)
-            await self._activate(ctx, pages[index], cdp_url)
+            await self._activate(pages[index], ids[index], cdp_url)
             return await self._tab_list(pages, index)
 
     async def close_tab(self, cdp_url: str, index: int) -> list[dict[str, Any]]:
         async with self._context(cdp_url) as ctx:
-            pages = _user_pages(ctx)
+            pages, _ = await self._tabs(ctx, cdp_url)
             self._check_index(pages, index)
             if len(pages) == 1:
                 # Closing the last tab exits Chromium, which destroys the whole session.
                 raise BrowserOpsError("refusing to close the last tab; use browser_close to end the session")
             await pages[index].close()
-            pages = _user_pages(ctx)
-            active = await self._active_index(ctx, pages, cdp_url)
-            await self._activate(ctx, pages[active], cdp_url)
+            pages, ids = await self._tabs(ctx, cdp_url)
+            active = await self._active_index(ids, cdp_url)
+            await self._activate(pages[active], ids[active], cdp_url)
             return await self._tab_list(pages, active)
 
     @staticmethod

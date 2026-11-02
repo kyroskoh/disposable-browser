@@ -8,7 +8,7 @@ Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/). Versioning: [S
 ## [0.2.1] - 2026-11-01
 
 ### Fixed
-- MCP `browser_tabs` select/new/close: later tool calls now act on the selected tab. The controller remembers the tab an agent last opened or selected per session, because tabs created over CDP open in their own windows and Chromium's DevTools activation order did not follow `bring_to_front`. DevTools order remains the fallback after a controller restart or when the remembered tab is closed.
+- MCP `browser_tabs`: tab indexes are now stable and later tool calls act on the selected tab. Every call reconnects over CDP, and Playwright lists pages in attach order, which varies between connections, so `select 0` could pick a different tab. Chromium's DevTools activation order did not follow `bring_to_front` either, because tabs created over CDP open in their own windows. The controller now remembers each session's tab order and selected tab (in memory, bounded) and falls back to DevTools order after a restart.
 
 ## [0.2.0] - 2026-11-01
 
